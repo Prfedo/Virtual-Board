@@ -7,6 +7,7 @@ into one webcam app.
 Gestures
     Index finger up          → draw (or erase, if ERASER is selected)
     Index + middle up        → select a toolbar button
+    SNAP button              → tidy a stroke into a line / rect / square / circle
     Any other pose / no hand → pen up
 
 Keyboard
@@ -24,6 +25,7 @@ import cv2
 from canvas import Canvas
 from gesture_detector import GestureDetector
 from hand_tracker import HandTracker
+from shape_snap import draw_freehand, draw_preview, draw_shape, recognize
 from toolbar import Toolbar
 
 
@@ -65,7 +67,7 @@ def _draw_hud(frame, gesture, fps, message):
             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2,
         )
     help_lines = [
-        "Index = draw    Index+Middle = toolbar    q=quit  c=clear  s=save",
+        "Index=draw  2 fingers=toolbar  SNAP=tidy shapes  q=quit  c=clear  s=save",
     ]
     cv2.putText(
         frame, help_lines[0], (10, h - 80),
@@ -103,18 +105,47 @@ def main():
     prev_time = time.time()
     status_message = ""
     status_until = 0.0
+    missed = 0
+    stroke_points = []
+
+    def commit_stroke(points):
+        if not points:
+            return ""
+        if toolbar.shape_snap and toolbar.selected_name != "ERASER":
+            shape = recognize(points)
+            if shape is not None:
+                draw_shape(canvas.layer, shape, toolbar.current_color, toolbar.thickness)
+                return f"Snapped to {shape['kind']}"
+        draw_freehand(canvas.layer, points, toolbar.current_color, toolbar.thickness)
+        return ""
+
+    def finish_stroke():
+        nonlocal stroke_points, status_message, status_until
+        if not stroke_points:
+            return
+        note = commit_stroke(stroke_points)
+        stroke_points = []
+        if note:
+            status_message = note
+            status_until = time.time() + 2.0
 
     print("Virtual Board started.")
     print("  Index finger up          → draw")
     print("  Index + middle up        → pick a toolbar button")
+    print("  SNAP                      → straighten lines / shapes")
     print("  q / ESC to quit")
 
     try:
         while True:
             ok, frame = cap.read()
             if not ok or frame is None:
+                missed += 1
                 print("WARNING: Failed to read a frame. Retrying...")
+                if missed >= 30:
+                    print("ERROR: Camera stopped sending frames. Exiting.")
+                    break
                 continue
+            missed = 0
 
             frame = cv2.flip(frame, 1)
             canvas.ensure_size(frame)
@@ -125,7 +156,10 @@ def main():
             index_tip = tracking.get("index_tip") if tracking.get("hand_detected") else None
             point = smoother.update(index_tip)
 
+            snapping = toolbar.shape_snap and toolbar.selected_name != "ERASER"
+
             if gesture == "select" and point is not None:
+                finish_stroke()
                 canvas.stop_stroke()
                 button = toolbar.hit_test(point[0], point[1])
                 action = toolbar.apply(button)
@@ -138,15 +172,25 @@ def main():
                     status_message = f"Saved {path}"
                     status_until = time.time() + 3.0
                     print(status_message)
+                elif action == "SNAP":
+                    status_message = "Shape snap ON" if toolbar.shape_snap else "Shape snap OFF"
+                    status_until = time.time() + 2.0
                 if button is None:
                     toolbar.reset_hit()
             elif gesture == "draw" and point is not None and not toolbar.contains(point[0], point[1]):
-                canvas.draw_stroke(point, toolbar.current_color, toolbar.thickness)
+                if snapping:
+                    stroke_points.append(point)
+                else:
+                    finish_stroke()
+                    canvas.draw_stroke(point, toolbar.current_color, toolbar.thickness)
             else:
+                finish_stroke()
                 canvas.stop_stroke()
                 toolbar.reset_hit()
 
             frame = canvas.overlay(frame)
+            if snapping and stroke_points:
+                draw_preview(frame, stroke_points, toolbar.current_color, toolbar.thickness)
             frame = toolbar.draw(frame)
 
             if point is not None:

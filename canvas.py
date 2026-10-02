@@ -26,12 +26,15 @@ class Canvas:
         self._prev_point = None
 
     def ensure_size(self, frame):
-        """Recreate the layer if the webcam resolution changes."""
+        """Keep the drawing layer the same size as the webcam frame."""
         h, w = frame.shape[:2]
         if w == self.width and h == self.height:
             return
+        if self.layer is not None and self.layer.size:
+            self.layer = cv2.resize(self.layer, (w, h), interpolation=cv2.INTER_NEAREST)
+        else:
+            self.layer = np.zeros((h, w, 3), dtype=np.uint8)
         self.width, self.height = w, h
-        self.layer = np.zeros((h, w, 3), dtype=np.uint8)
         self._prev_point = None
 
     def draw_stroke(self, point, color, thickness):
@@ -70,6 +73,9 @@ class Canvas:
         the live video. Eraser strokes are black, so they punch a hole
         back to the camera feed.
         """
+        if frame.shape[:2] != self.layer.shape[:2]:
+            self.ensure_size(frame)
+
         gray = cv2.cvtColor(self.layer, cv2.COLOR_BGR2GRAY)
         _, mask = cv2.threshold(gray, 10, 255, cv2.THRESH_BINARY)
         mask_inv = cv2.bitwise_not(mask)

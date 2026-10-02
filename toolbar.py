@@ -26,6 +26,7 @@ class Toolbar:
         ("ERASER", (40, 40, 40),    410, 10, 520, 70),
         ("CLEAR",  (50, 50, 50),    530, 10, 630, 70),
         ("SAVE",   (90, 90, 90),    640, 10, 740, 70),
+        ("SNAP",   (140, 80, 20),   750, 10, 870, 70),
     ]
 
     COLOR_MAP = {
@@ -41,6 +42,7 @@ class Toolbar:
         self.brush_size = 8
         self.eraser_size = 40
         self.selected_name = "RED"
+        self.shape_snap = False
         self._last_hit = None
 
     @property
@@ -65,6 +67,8 @@ class Toolbar:
         Apply a button selection.
 
         Color / eraser changes take effect immediately.
+        SNAP toggles shape cleanup and is returned so main.py can
+        show a status message.
         CLEAR and SAVE are returned as action strings so main.py can
         call the canvas. Repeating the same button every frame is ignored.
         """
@@ -79,6 +83,10 @@ class Toolbar:
             self.selected_name = name
             self.current_color = self.COLOR_MAP[name]
             return None
+
+        if name == "SNAP":
+            self.shape_snap = not self.shape_snap
+            return "SNAP"
 
         if name in ("CLEAR", "SAVE"):
             return name
@@ -101,10 +109,15 @@ class Toolbar:
                 frame, name, (x1 + 8, y1 + 40),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2,
             )
-            if name == self.selected_name:
+            selected = name == self.selected_name or (name == "SNAP" and self.shape_snap)
+            if selected:
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 255, 255), 3)
 
-        status = f"Brush: {self.brush_size}  |  Eraser: {self.eraser_size}  |  Mode: {self.selected_name}"
+        snap = "ON" if self.shape_snap else "OFF"
+        status = (
+            f"Brush: {self.brush_size}  |  Eraser: {self.eraser_size}  "
+            f"|  Mode: {self.selected_name}  |  SNAP: {snap}"
+        )
         cv2.putText(
             frame, status, (10, self.HEIGHT + 28),
             cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2,
