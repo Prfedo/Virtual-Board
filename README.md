@@ -1,283 +1,116 @@
-<<<<<<< HEAD
-# Hand Detection & Tracking Module (Member 1)
+# Virtual Board
 
-This document covers **only** the Hand Detection & Tracking module. Drawing,
-gesture logic, UI, and AI features are owned by the rest of the team and are
-not part of this file.
+Webcam whiteboard: track one hand, draw with your index finger, and pick tools from an on-screen toolbar.
 
-## 1. Recommended Project Structure
+## Project layout
 
 ```
 virtual-board/
-├── hand_tracker.py          # This module (Member 1)
-├── test_hand_tracking.py    # Standalone demo/test for this module
+├── hand_tracker.py          # Member 1 — MediaPipe hand landmarks
+├── Test_hand_tracking.py    # Standalone tracker demo
+├── canvas.py                 # Member 2 — drawing layer
+├── gesture_detector.py       # Member 3 — draw / select / idle
+├── toolbar.py                 # Member 4 — colors, eraser, clear, save
+├── main.py                    # Wires every module together
 ├── requirements.txt
-├── canvas.py                 # Member 2 - Drawing Engine
-├── gesture_detector.py       # Member 3 - Gesture Recognition
-├── toolbar.py                 # Member 4 - UI
-├── main.py                    # Integrates all modules
 └── README.md
 ```
 
-`hand_tracker.py` has no dependency on any other project file, so it can be
-developed, tested, and version-controlled independently.
-
-## 2. Installation
+## Install
 
 ```bash
 pip install -r requirements.txt
 ```
 
-or individually:
+## Run the full app
 
 ```bash
-pip install opencv-python
-pip install mediapipe
+python main.py
 ```
 
-## 3. Running the Test Program
+### Gestures
 
-```bash
-python test_hand_tracking.py
-```
+| Pose | Action |
+|------|--------|
+| Index finger up (others down) | Draw, or erase if **ERASER** is selected |
+| Index + middle up | Hover the toolbar and tap a button |
+| Anything else / no hand | Pen up |
 
-Press **Q** to quit. The webcam window shows the hand skeleton, the FPS
-counter, and the tracked index fingertip coordinates.
+Stay out of the top toolbar strip while drawing so you do not paint over the buttons.
 
-## 4. API Usage
+### Keyboard
+
+| Key | Action |
+|-----|--------|
+| `q` or `Esc` | Quit |
+| `c` | Clear the board |
+| `s` | Save `saved_drawings/board_YYYYMMDD_HHMMSS.png` |
+| `[` / `]` | Smaller / larger brush |
+| `,` / `.` | Smaller / larger eraser |
+
+## Module APIs
+
+### Hand tracking (`hand_tracker.py`)
 
 ```python
 from hand_tracker import HandTracker
 
 tracker = HandTracker(max_num_hands=1)
-
-result = tracker.process(frame)   # frame = a BGR image from OpenCV
+result = tracker.process(frame)
 
 if result["hand_detected"]:
     index_x, index_y = result["index_tip"]
 
-tracker.close()  # release resources when done
+tracker.close()
 ```
 
-`HandTracker` can also be used as a context manager:
+`process(frame)` always returns the same keys. Missing data is `None` or `{}`.
+
+### Gestures (`gesture_detector.py`)
 
 ```python
-with HandTracker() as tracker:
-    result = tracker.process(frame)
+from gesture_detector import GestureDetector
+
+gesture = GestureDetector().detect(result)  # "draw" | "select" | "idle"
 ```
 
-## 5. Returned Data Shape
-
-`process(frame)` always returns a dictionary with the same keys, whether or
-not a hand was detected — so callers never need to check if a key exists,
-only whether it's `None`.
+### Canvas (`canvas.py`)
 
 ```python
-{
-    "hand_detected": True,
-    "landmarks": {0: (x, y), 1: (x, y), ..., 20: (x, y)},          # pixel coords
-    "normalized_landmarks": {0: (nx, ny, nz), ..., 20: (nx, ny, nz)},  # 0.0-1.0 + depth
-    "thumb_tip":  (x, y),
-    "index_tip":  (x, y),
-    "middle_tip": (x, y),
-    "ring_tip":   (x, y),
-    "pinky_tip":  (x, y),
-    "handedness": "Right",   # or "Left", or None if no hand
-}
+from canvas import Canvas
+
+board = Canvas()
+board.ensure_size(frame)
+board.draw_stroke((x, y), color=(0, 0, 255), thickness=8)
+board.stop_stroke()
+frame = board.overlay(frame)
+board.clear()
+path = board.save()
 ```
 
-When no hand is detected, `hand_detected` is `False`, `landmarks` and
-`normalized_landmarks` are empty dicts `{}`, and every fingertip key is
-`None`.
-
-## 6. Landmark IDs (MediaPipe's 21-point hand model)
-
-| ID | Name          | ID | Name          | ID | Name          |
-|----|---------------|----|---------------|----|---------------|
-| 0  | Wrist         | 7  | Index DIP     | 14 | Ring PIP      |
-| 1  | Thumb CMC     | 8  | **Index TIP** | 15 | Ring DIP      |
-| 2  | Thumb MCP     | 9  | Middle MCP    | 16 | **Ring TIP**  |
-| 3  | Thumb IP      | 10 | Middle PIP    | 17 | Pinky MCP     |
-| 4  | **Thumb TIP** | 11 | Middle DIP    | 18 | Pinky PIP     |
-| 5  | Index MCP     | 12 | **Middle TIP**| 19 | Pinky DIP     |
-| 6  | Index PIP     | 13 | Ring MCP      | 20 | **Pinky TIP** |
-
-Each finger has 4 points running from its base to its tip. The tip
-landmarks (4, 8, 12, 16, 20) are the ones exposed as named shortcuts
-(`thumb_tip`, `index_tip`, etc.) since they're what most gesture and
-drawing logic needs.
-
-## 7. Integration: Member 2 (Drawing Engine)
-
-Member 2 only needs the index fingertip pixel coordinates to know where to
-draw on the canvas:
+### Toolbar (`toolbar.py`)
 
 ```python
-from hand_tracker import HandTracker
+from toolbar import Toolbar
 
-tracker = HandTracker()
-
-while True:
-    # ... get `frame` from the shared webcam loop in main.py ...
-    result = tracker.process(frame)
-
-    if result["hand_detected"]:
-        x, y = result["index_tip"]
-        canvas.draw_point(x, y)   # Member 2's own drawing function
-    else:
-        canvas.stop_stroke()      # e.g. lift the "pen" when hand is lost
+ui = Toolbar()
+frame = ui.draw(frame)
+name = ui.hit_test(x, y)          # "RED" / "CLEAR" / ... or None
+action = ui.apply(name)           # "CLEAR" / "SAVE" / None
+color = ui.current_color          # BGR tuple; eraser is (0, 0, 0)
+thickness = ui.thickness
 ```
 
-Because coordinates are already converted to pixels (matching the frame's
-width/height), Member 2 can draw directly onto a canvas of the same
-resolution without doing any conversion.
-
-## 8. Integration: Member 3 (Gesture Recognition)
-
-Member 3 can use either the full `landmarks` dict (pixel coordinates, good
-for measuring on-screen distances) or `normalized_landmarks` (0.0–1.0 +
-depth, good for resolution-independent comparisons like "is the thumb close
-to the index finger"):
-
-```python
-from hand_tracker import HandTracker
-
-tracker = HandTracker()
-
-result = tracker.process(frame)
-
-if result["hand_detected"]:
-    all_points = result["landmarks"]           # {0: (x,y), ..., 20: (x,y)}
-    norm_points = result["normalized_landmarks"] # {0: (x,y,z), ...}
-
-    thumb_tip = all_points[4]
-    index_tip = all_points[8]
-
-    # Example: simple pinch detection using normalized coordinates
-    nx1, ny1, _ = norm_points[4]
-    nx2, ny2, _ = norm_points[8]
-    distance = ((nx1 - nx2) ** 2 + (ny1 - ny2) ** 2) ** 0.5
-
-    if distance < 0.05:
-        print("Pinch gesture detected")
-```
-
-`result["handedness"]` (`"Left"` / `"Right"` / `None`) is also available if
-gesture logic ever needs to treat hands differently.
-
-## 9. Performance Considerations
-
-- `static_image_mode=False` (the default) lets MediaPipe track landmarks
-  between frames instead of re-detecting from scratch every time — this is
-  what makes real-time video tracking fast.
-- `max_num_hands=1` (default) is faster than tracking 2 hands; only raise it
-  if the project later needs two-hand support.
-- Frame resizing (e.g. capturing at 1280x720 instead of 4K) reduces
-  MediaPipe's per-frame processing time significantly.
-- Always call `tracker.close()` (or use the `with HandTracker() as tracker:`
-  context manager) to release native resources when done.
-
-## 10. Testing Checklist
-
-- [ ] Webcam opens without errors.
-- [ ] Program exits cleanly and prints a message when no webcam is found.
-- [ ] Hand skeleton draws correctly when a hand is in frame.
-- [ ] "No hand detected" message shows when hand leaves the frame.
-- [ ] Index fingertip coordinates update smoothly as the hand moves.
-- [ ] FPS counter displays and updates every frame.
-- [ ] Pressing `q` closes the window and releases the webcam (check your OS
-      camera indicator light turns off).
-- [ ] No crash when the hand exits/re-enters the frame repeatedly.
-
-## 11. Common Errors and Fixes
-
-| Error | Likely Cause | Fix |
-|---|---|---|
-| `ERROR: Could not open webcam` | Camera in use by another app, or wrong index | Close other apps using the camera; try `cv2.VideoCapture(1)` |
-| `ModuleNotFoundError: No module named 'cv2'` | opencv-python not installed | `pip install opencv-python` |
-| `ModuleNotFoundError: No module named 'mediapipe'` | mediapipe not installed | `pip install mediapipe` |
-| Low FPS / laggy tracking | High resolution or CPU-bound machine | Lower `CAP_PROP_FRAME_WIDTH/HEIGHT`, close other apps |
-| Hand skeleton flickers on/off | Confidence thresholds too strict/loose, poor lighting | Adjust `min_detection_confidence` / `min_tracking_confidence`, improve lighting |
-| `AttributeError` on `mp.solutions.hands` | Very old or incompatible mediapipe version | `pip install --upgrade mediapipe` |
-
-## 12. Future Improvement Ideas
-
-- Extend `max_num_hands` to 2 and return a list of per-hand results instead
-  of a single dict, for two-handed gestures.
-- Add landmark smoothing (e.g. a simple moving average) to reduce jitter,
-  which would make Member 2's drawing lines steadier.
-- Add a confidence/quality score to the returned dict so gesture logic can
-  ignore low-confidence frames.
-=======
-# Virtual-Board
-our summer intern project 
-# Member 4 — User Interface (Toolbar)
-
-This branch (`member4-ui`) contains the UI layer for the AI Virtual Painter project: the color palette, action buttons, and brush-size control that sit on top of the webcam feed.
-
-## What this module does
-
-- Draws a row of buttons directly on each video frame: **RED, BLUE, GREEN, ERASER, CLEAR, SAVE**
-- Draws a slider (OpenCV trackbar) to control brush size (1–50)
-- Highlights whichever color is currently selected
-- Detects when a point (currently a mouse click, later a fingertip) lands on a button
-- Exposes clean functions so other modules can use this UI without needing to know how it's drawn
-
-## Files
-
-| File | Purpose |
-|---|---|
-| `toolbar.py` | All UI logic: button layout, drawing, click detection, and a standalone test loop |
-
-## How to run it standalone
+## Tracker-only demo
 
 ```bash
-pip install opencv-python
-python toolbar.py
+python Test_hand_tracking.py
 ```
 
-- Click a color button to select it (highlighted with a white border)
-- Click CLEAR or SAVE to trigger their action (currently just prints a message)
-- Drag the "Brush Size" slider under the window to change brush thickness
-- Press `ESC` to quit
+Press **Q** to quit. Shows the skeleton, index fingertip, and FPS.
 
-> Note: This file currently uses **mouse clicks** as a stand-in for fingertip input, since Member 1's hand-tracking module isn't integrated yet.
+## Tips
 
-## Public functions (for integration)
-
-Other members / `main.py` should use these instead of copying this file's logic:
-
-```python
-from toolbar import draw_toolbar, check_toolbar_click
-
-frame = draw_toolbar(frame)              # draw buttons + brush size on a frame
-result = check_toolbar_click(x, y)       # returns "RED" / "BLUE" / "GREEN" /
-                                          # "ERASER" / "CLEAR" / "SAVE" / None
-```
-
-- `x, y` should be the fingertip coordinates from Member 1's hand detector (once available).
-- `check_toolbar_click` does **not** change any state — it only reports which button was touched. The caller (in this file's `on_mouse_click`, or eventually `main.py`) decides what to do with that result.
-
-## Shared state / variables
-
-| Variable | Type | Meaning |
-|---|---|---|
-| `current_color` | `(B, G, R)` tuple | Color Member 2's drawing engine should draw with |
-| `brush_size` | `int` (1–50) | Thickness Member 2's drawing engine should use |
-
-Member 2 should read `current_color` and `brush_size` from this module each frame.
-
-## Integration plan
-
-- [ ] Replace mouse-click stand-in with real `(x, y)` fingertip position from Member 1
-- [ ] Wire `CLEAR` action to Member 2's canvas-clear function
-- [ ] Wire `SAVE` action to Member 5's save/export function
-- [ ] Confirm color format `(B, G, R)` matches what Member 2 and Member 3 expect
-- [ ] Merge into `main` once tested against the real hand-tracking + drawing pipeline
-
-## Known limitations
-
-- No hover-preview before clicking (only shows selection after the fact)
-- Brush size has no visual size preview (just a number)
-- UI is fixed in position; not responsive to different camera resolutions
->>>>>>> origin/malak's-branch
+- Use even lighting and keep the whole hand in view.
+- If the camera fails to open, close other apps using it or try index `1` in `main.py`.
+- Lower capture resolution in `main.py` if FPS is low.
